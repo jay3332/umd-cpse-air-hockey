@@ -1,5 +1,28 @@
-import serial
-from dualsense_controller import DualSenseController, active_dualsense_controller
+from dualsense_controller import DualSenseController, JoyStick, active_dualsense_controller
+from serial import Serial, PARITY_ODD
+from typing import Final
+
+#: The bitrate of the serial connection.
+SERIAL_BITRATE: Final[int] = 115_200
+
+
+class Tx:
+    """Serial communicator"""
+
+    def __init__(self) -> None:
+        self.serial: Serial = Serial(port='/dev/cu.usbmodem101', baudrate=SERIAL_BITRATE)
+        print(self.serial.readline())
+
+    def send(self, data: bytes) -> None:
+        self.serial.write(data)
+
+    def close(self) -> None:
+        self.serial.close()
+
+    def update_raw_motor_speeds(self, pos: JoyStick) -> None:
+        x = int(pos.x * 1_000_000)
+        y = int(pos.y * 1_000_000)
+        self.send(b'V' + x.to_bytes(4, 'little', signed=True) + y.to_bytes(4, 'little', signed=True))
 
 
 class EventHandler:
@@ -7,22 +30,11 @@ class EventHandler:
 
     def __init__(self, controller: DualSenseController) -> None:
         self.controller = controller
-        controller.left_trigger.on_change(self.on_left_trigger)
-        controller.left_stick_x.on_change(self.on_left_stick_x_changed)
-        controller.left_stick_y.on_change(self.on_left_stick_y_changed)
+        self.tx: Tx = Tx()
         controller.left_stick.on_change(self.on_left_stick_changed)
 
-    def on_left_trigger(self, value: int) -> None:
-        print(f"Left trigger value: {value}")
-
-    def on_left_stick_x_changed(self, value: int) -> None:
-        print(f"Left stick X value: {value}")
-
-    def on_left_stick_y_changed(self, value: int) -> None:
-        print(f"Left stick Y value: {value}")
-
-    def on_left_stick_changed(self, x: int, y: int) -> None:
-        print(f"Left stick X value: {x}, Y value: {y}")
+    def on_left_stick_changed(self, joystick: JoyStick) -> None:
+        self.tx.update_raw_motor_speeds(joystick)
 
 
 def main() -> None:

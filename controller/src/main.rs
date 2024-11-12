@@ -3,14 +3,23 @@
 #![no_std]
 #![no_main]
 
-use arduino_hal::{Peripherals, Usart, hal::{Atmega, usart::{BaudrateArduinoExt, UsartOps}}};
+mod stepper;
+use stepper::Stepper;
+
+use arduino_hal::{
+    hal::{
+        usart::{BaudrateArduinoExt, UsartOps},
+        Atmega, Pins as SrcPins,
+    },
+    Peripherals, Pins, Usart,
+};
 use panic_halt as _;
 
 /// Bitrate for the serial pin.
 /// Current value taken from <https://github.com/jjrobots/Air_Hockey_Robot_EVO/blob/master/Arduino/AHRobot_EVO/AHRobot_EVO.ino#L38>
 const BITRATE: u32 = 115_200;
 
-/// Maximum motor speed, in steps/seg.
+/// Maximum motor speed, in revolutions per minute.
 const MOTOR_MAX_SPEED: i32 = 32_000;
 
 trait SerialExt {
@@ -28,9 +37,9 @@ impl<U: UsartOps<Atmega, Rx, Tx>, Rx, Tx> SerialExt for Usart<U, Rx, Tx> {
     }
 }
 
-/// Sets the relative velocity of the paddle to <X, Y>, where X and Y are in the range [-1, 1].
+/// Computes the relative velocity of the paddle (X, Y), where X and Y are in the range [-1, 1].
 /// The speed is relative to the maximum speed of the motor.
-fn set_paddle_motor_speeds(mut x: f32, mut y: f32) {
+fn calculate_paddle_motor_speeds(mut x: f32, mut y: f32) -> (f32, f32) {
     // If x + y > 1, scale the values such that x + y = 1.
     if x + y > 1.0 {
         let scale = 1.0 / (x + y);
@@ -49,19 +58,28 @@ fn set_paddle_motor_speeds(mut x: f32, mut y: f32) {
     // Reference: <http://wiki.fluidnc.com/en/config/kinematics>
     let a = (x + y) * MOTOR_MAX_SPEED as f32;
     let b = (x - y) * MOTOR_MAX_SPEED as f32;
-
-
+    (a, b)
 }
 
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = Peripherals::take().expect("no arduino device?");
-    let pins = arduino_hal::pins!(dp);
+    let pins = Pins::with_mcu_pins(SrcPins::new(dp.PORTB, dp.PORTC, dp.PORTD));
     let mut serial = arduino_hal::Usart::new(
-        dp.USART1,
+        dp.USART0,
         pins.d0,
         pins.d1.into_output(),
         BaudrateArduinoExt::into_baudrate(BITRATE),
+    );
+    ufmt::uwriteln!(serial, "Ready!");
+
+    let mut stepper_a = Stepper::from_pins(
+        pins.d2.into_output().downgrade(),
+        pins.d5.into_output().downgrade(),
+    );
+    let mut stepper_b = Stepper::from_pins(
+        pins.d3.into_output().downgrade(),
+        pins.d6.into_output().downgrade(),
     );
 
     // Serial commands
@@ -71,14 +89,27 @@ fn main() -> ! {
     // - V[X:i32][Y:i32] -> Set the velocity (relative speed) of the paddle to <X/10^6, Y/10^6>.
     //   Constraints: -10^6 <= X <= 10^6 and -10^6 <= Y <= 10^6.
     loop {
-        match serial.read_byte() {
+        let command = serial.read_byte();
+        ufmt::uwriteln!(serial, "Received command: {}", command);
+
+        match command {
             b'V' => {
                 const RANGE: i32 = 1_000_000;
 
                 let x = serial.read_i32().clamp(-RANGE, RANGE);
                 let y = serial.read_i32().clamp(-RANGE, RANGE);
-                set_paddle_motor_speeds(x as f32 / RANGE as f32, y as f32 / RANGE as f32);
+                ufmt::uwriteln!(serial, "Received V({}, {})", x, y);
+
+                let (a, b) =
+                    calculate_paddle_motor_speeds(x as f32 / RANGE as f32, y as f32 / RANGE as f32);
+                stepper_a.set_speed(a);
+                stepper_b.set_speed(b);
             }
+            _ => continue,
         }
+
+        // Tick
+        stepper_a.step();
+        stepper_b.step();
     }
 }
