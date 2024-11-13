@@ -13,7 +13,8 @@ use arduino_hal::{
     },
     Peripherals, Pins, Usart,
 };
-use panic_halt as _;
+#[allow(unused_imports)]
+use panic_halt;
 
 /// Bitrate for the serial pin.
 /// Current value taken from <https://github.com/jjrobots/Air_Hockey_Robot_EVO/blob/master/Arduino/AHRobot_EVO/AHRobot_EVO.ino#L38>
@@ -71,7 +72,7 @@ fn main() -> ! {
         pins.d1.into_output(),
         BaudrateArduinoExt::into_baudrate(BITRATE),
     );
-    ufmt::uwriteln!(serial, "Ready!");
+    ufmt::uwriteln!(serial, "Ready!").ok();
 
     let mut stepper_a = Stepper::from_pins(
         pins.d2.into_output().downgrade(),
@@ -90,7 +91,7 @@ fn main() -> ! {
     //   Constraints: -10^6 <= X <= 10^6 and -10^6 <= Y <= 10^6.
     loop {
         let command = serial.read_byte();
-        ufmt::uwriteln!(serial, "Received command: {}", command);
+        ufmt::uwriteln!(serial, "Received command: {}", command).ok();
 
         match command {
             b'V' => {
@@ -98,7 +99,7 @@ fn main() -> ! {
 
                 let x = serial.read_i32().clamp(-RANGE, RANGE);
                 let y = serial.read_i32().clamp(-RANGE, RANGE);
-                ufmt::uwriteln!(serial, "Received V({}, {})", x, y);
+                ufmt::uwriteln!(serial, "Received V({}, {})", x, y).ok();
 
                 let (a, b) =
                     calculate_paddle_motor_speeds(x as f32 / RANGE as f32, y as f32 / RANGE as f32);

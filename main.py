@@ -1,5 +1,5 @@
 from dualsense_controller import DualSenseController, JoyStick, active_dualsense_controller
-from serial import Serial, PARITY_ODD
+from serial import Serial
 from typing import Final
 
 #: The bitrate of the serial connection.
