@@ -60,14 +60,13 @@ impl Stepper {
         self.delay_us = NonZeroU32::new((Self::MIN_DELAY_US / speed) as u32);
     }
 
+    // TODO this is blocking
     pub fn step(&mut self) {
         if self.steps <= -Self::MAX_STEPS || self.steps >= Self::MAX_STEPS {
             return;
         }
         if let Some(delay_us) = self.delay_us {
-            self.step.set_high();
-            arduino_hal::delay_us(delay_us.get());
-            self.step.set_low();
+            self.step.toggle();
             arduino_hal::delay_us(delay_us.get());
             self.steps += self.direction();
         }
