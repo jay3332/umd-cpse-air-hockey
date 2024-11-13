@@ -6,6 +6,7 @@
 mod stepper;
 use stepper::Stepper;
 
+use arduino_hal::prelude::_embedded_hal_serial_Read;
 use arduino_hal::{
     hal::{
         usart::{BaudrateArduinoExt, UsartOps},
@@ -24,15 +25,10 @@ const BITRATE: u32 = 115_200;
 const MOTOR_MAX_SPEED: i32 = 32_000;
 
 trait SerialExt {
-    fn read_u32(&mut self) -> u32;
     fn read_i32(&mut self) -> i32;
 }
 
 impl<U: UsartOps<Atmega, Rx, Tx>, Rx, Tx> SerialExt for Usart<U, Rx, Tx> {
-    fn read_u32(&mut self) -> u32 {
-        u32::from_le_bytes([self.read_byte(); 4])
-    }
-
     fn read_i32(&mut self) -> i32 {
         i32::from_le_bytes([self.read_byte(); 4])
     }
@@ -40,7 +36,8 @@ impl<U: UsartOps<Atmega, Rx, Tx>, Rx, Tx> SerialExt for Usart<U, Rx, Tx> {
 
 /// Computes the relative velocity of the paddle (X, Y), where X and Y are in the range [-1, 1].
 /// The speed is relative to the maximum speed of the motor.
-fn calculate_paddle_motor_speeds(mut x: f32, mut y: f32) -> (f32, f32) {
+#[inline]
+const fn corexy_to_cartesian(mut x: f32, mut y: f32) -> (f32, f32) {
     // If x + y > 1, scale the values such that x + y = 1.
     if x + y > 1.0 {
         let scale = 1.0 / (x + y);
@@ -90,23 +87,19 @@ fn main() -> ! {
     // - V[X:i32][Y:i32] -> Set the velocity (relative speed) of the paddle to <X/10^6, Y/10^6>.
     //   Constraints: -10^6 <= X <= 10^6 and -10^6 <= Y <= 10^6.
     loop {
-        let command = serial.read_byte();
-        ufmt::uwriteln!(serial, "Received command: {}", command).ok();
-
-        match command {
-            b'V' => {
+        match serial.read() {
+            Ok(b'V') => {
                 const RANGE: i32 = 1_000_000;
 
                 let x = serial.read_i32().clamp(-RANGE, RANGE);
                 let y = serial.read_i32().clamp(-RANGE, RANGE);
                 ufmt::uwriteln!(serial, "Received V({}, {})", x, y).ok();
 
-                let (a, b) =
-                    calculate_paddle_motor_speeds(x as f32 / RANGE as f32, y as f32 / RANGE as f32);
+                let (a, b) = corexy_to_cartesian(x as f32 / RANGE as f32, y as f32 / RANGE as f32);
                 stepper_a.set_speed(a);
                 stepper_b.set_speed(b);
             }
-            _ => continue,
+            _ => {}
         }
 
         // Tick

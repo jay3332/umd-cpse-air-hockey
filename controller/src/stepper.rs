@@ -1,7 +1,4 @@
-use arduino_hal::{
-    hal::port::{mode, Dynamic, Pin},
-    Pins,
-};
+use arduino_hal::hal::port::{mode, Dynamic, Pin};
 use core::num::NonZeroU32;
 
 type Output<P = Dynamic> = Pin<mode::Output, P>;
