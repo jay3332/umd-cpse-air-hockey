@@ -4,12 +4,11 @@ use arduino_hal::{clock::Clock, pac::TC1};
 use avr_device::interrupt::Mutex;
 use core::cell::Cell;
 
-/// The clock frequency of the ATmega328P, in µHz.
-pub const FREQ_UHZ: u32 = arduino_hal::DefaultClock::FREQ / 1_000_000; // 16 µHz
+/// The clock frequency of the ATmega328P, in MHz.
+pub const FREQ_UHZ: u32 = arduino_hal::DefaultClock::FREQ / 1_000_000; // 16 MHz
 
-/// The prescaled clock frequency of the ATmega328P, in µHz.
-pub const PRESCALED_FREQ_UHZ: u32 = FREQ_UHZ / 8; // 2 µHz
-
+/// The prescaled clock frequency of the ATmega328P, in MHz.
+pub const PRESCALED_FREQ_UHZ: u32 = FREQ_UHZ / 8; // 2 MHz
 /// The number of prescaled clock ticks for each overflow.
 pub const TICKS_PER_OVERFLOW: u16 = 8;
 
