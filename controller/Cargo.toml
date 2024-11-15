@@ -22,6 +22,10 @@ git = "https://github.com/rahix/avr-hal"
 rev = "3e362624547462928a219c40f9ea8e3a64f21e5f"
 features = ["arduino-uno"]
 
+[dependencies.avr-device]
+version = "0.5.4"
+features = ["rt", "device-selected"]
+
 # The latest releases of `proc-macro2` do not support the rust toolchain that
 # we use.  Thus, we must fix this dependency to an older version where our
 # toolchain is still supported.  See https://github.com/Rahix/avr-hal/issues/537

@@ -1,74 +1,153 @@
+use crate::{clock::micros, RANGE};
 use arduino_hal::hal::port::{mode, Dynamic, Pin};
-use core::num::NonZeroU32;
+use core::cmp::Ordering;
 
 type Output<P = Dynamic> = Pin<mode::Output, P>;
 
-/// Stepper motor wrapper.
+/// The current active action of the stepper motor.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// The motor is stopped.
+    #[default]
+    Stopped,
+    /// The motor is moving to a new position at a certain speed.
+    MoveTo(
+        /// The target step count, n, the motor is moving to.
+        i32,
+    ),
+}
+
+/// Driver for the stepper motor.
 pub struct Stepper {
     step: Output,
     dir: Output,
-    /// The delay between each step, in microseconds. ``None`` means the motor is stopped.
-    pub delay_us: Option<NonZeroU32>,
+    /// The current action the motor is performing.
+    pub action: Action,
     /// The step count, n, the motor is currently on.
     pub steps: i32,
+    /// The delay between each step, in microseconds.
+    delay: u32,
+    /// The time the motor last stepped, given in microseconds since program start.
+    last_step: u32,
 }
 
 impl Stepper {
-    /// Steps per unit for the stepper motor.
-    ///
-    /// Note: Currently, the "unit" is arbitrary but later will be calibrated to ~1cm.
-    pub const STEPS_PER_UNIT: u32 = 1000;
-
-    /// Minimum delay between each step, in microseconds. (The "fastest" speed)
+    /// Minimum delay between each step. (The "fastest" speed)
     ///
     /// The curve of "relative speed" follows a reciprocal function, where the delay is inversely
-    /// proportional to the speed. ∆t = |MIN_DELAY_US / speed|.
-    pub const MIN_DELAY_US: f32 = 45.0;
+    /// proportional to the speed. ∆t = |MIN_DELAY_MICROS / speed|.
+    pub const MIN_DELAY_MICROS: u32 = 40;
 
     /// The absolute rotary bounds of the stepper motors, in steps.
     /// The motor will not move beyond these bounds.
-    pub const MAX_STEPS: i32 = 10_000;
-
-    /// The absolute "relative" speed by which the motor will stop moving.
-    pub const EPSILON: f32 = 0.001;
+    pub const MAX_STEPS: i32 = 50_000;
 
     /// Creates a new stepper motor instance from the given [`Pins`].
     pub fn from_pins(step: Output, dir: Output) -> Self {
         Self {
             step,
             dir,
-            delay_us: None,
+            action: Action::Stopped,
             steps: 0,
+            delay: Self::MIN_DELAY_MICROS,
+            last_step: 0,
         }
     }
 
-    /// Sets the "relative" speed of the motor. Must be in the range [-1, 1].
-    pub fn set_speed(&mut self, mut speed: f32) {
-        if speed < Self::EPSILON && speed > -Self::EPSILON {
-            self.delay_us = None;
-            return;
-        }
-        debug_assert!(speed >= -1.0 && speed <= 1.0);
+    /// Sets the "relative" speed of the motor. Must be in the range [0, 10^4].
+    ///
+    /// # Note
+    /// - This does not move the motor, but rather sets the speed at which it will move.
+    pub fn set_speed(&mut self, speed: u16) {
+        debug_assert!(speed <= RANGE);
 
-        if speed.is_sign_negative() {
-            self.dir.set_low();
-            speed = -speed;
+        if speed == 0 {
+            self.stop();
         } else {
-            self.dir.set_high();
+            self.delay = Self::MIN_DELAY_MICROS * RANGE as u32 / speed as u32;
         }
-
-        self.delay_us = NonZeroU32::new((Self::MIN_DELAY_US / speed) as u32);
     }
 
-    // TODO this is blocking
-    pub fn step(&mut self) {
-        if self.steps <= -Self::MAX_STEPS || self.steps >= Self::MAX_STEPS {
-            return;
-        }
-        if let Some(delay_us) = self.delay_us {
-            self.step.toggle();
-            arduino_hal::delay_us(delay_us.get());
-            self.steps += self.direction();
+    /// Move the motor to the given step count at the given speed.
+    /// The speed should be in the range [0, 10^4], and the target should be in the range
+    /// [-MAX_STEPS, MAX_STEPS].
+    #[inline]
+    pub fn move_to(&mut self, target: i32, speed: u16) {
+        self.action = match speed {
+            0 => Action::Stopped,
+            speed => {
+                self.set_speed(speed);
+                Action::MoveTo(target)
+            }
+        };
+    }
+
+    /// The motor will simply begin moving at the given speed, but will not stop (unless it reaches
+    /// a boundary).
+    /// The speed should be in the range [-10^4, 10^4].
+    #[inline]
+    pub fn run_at_speed(&mut self, speed: i16) {
+        let target = Stepper::MAX_STEPS * speed.signum() as i32;
+        self.move_to(target, speed.unsigned_abs());
+    }
+
+    /// Stops the motor.
+    #[inline]
+    pub fn stop(&mut self) {
+        self.action = Action::Stopped;
+    }
+
+    /// Whether the motor is currently stopped.
+    #[inline]
+    pub fn is_stopped(&self) -> bool {
+        matches!(self.action, Action::Stopped)
+    }
+
+    /// Steps the motor by one step. This shouldn't be called directly, but rather through the
+    /// `poll` method.
+    ///
+    /// # Note
+    /// - This only updates [`steps`], not [`last_step`].
+    /// - This does not check if the motor is at its bounds.
+    /// - This does not check if the motor should be stopped nor consider the acceleration profile.
+    #[inline]
+    fn step(&mut self) {
+        self.step.toggle();
+        self.steps += self.direction();
+    }
+
+    /// Polls the motor and potentially steps it.
+    ///
+    /// # Returns
+    /// The difference in steps since before the poll. This is typically -1, 0, or 1, given this
+    /// function is called frequently enough. If the motor is stopped, this will always return 0.
+    pub fn poll(&mut self) -> i32 {
+        match self.action {
+            Action::Stopped => 0,
+            Action::MoveTo(target) => {
+                let now = micros();
+                let sign = match self.steps.cmp(&target) {
+                    Ordering::Less => {
+                        self.dir.set_low();
+                        -1
+                    }
+                    Ordering::Greater => {
+                        self.dir.set_high();
+                        1
+                    }
+                    Ordering::Equal => {
+                        self.stop();
+                        return 0;
+                    }
+                };
+                let steps_needed = (now - self.last_step) / self.delay;
+
+                for _ in 0..steps_needed {
+                    self.step();
+                }
+                self.last_step = now;
+                steps_needed as i32 * sign
+            }
         }
     }
 

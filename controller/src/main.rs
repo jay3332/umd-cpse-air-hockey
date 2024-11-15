@@ -2,8 +2,11 @@
 
 #![no_std]
 #![no_main]
+#![feature(abi_avr_interrupt)]
 
+mod clock;
 mod stepper;
+
 use stepper::Stepper;
 
 use arduino_hal::{
@@ -21,6 +24,9 @@ use panic_halt;
 /// Current value taken from <https://github.com/jjrobots/Air_Hockey_Robot_EVO/blob/master/Arduino/AHRobot_EVO/AHRobot_EVO.ino#L38>
 const BITRATE: u32 = 115_200;
 
+/// The range of the simulated motor speed.
+const RANGE: u16 = 10_000;
+
 type Serial = Usart0<DefaultClock>;
 
 pub struct Hardware {
@@ -30,16 +36,13 @@ pub struct Hardware {
 }
 
 impl Hardware {
-    /// Maximum motor speed, in revolutions per minute.
-    const MOTOR_MAX_SPEED: i32 = 32_000;
-
-    /// Computes the relative velocity of the paddle (X, Y), where X and Y are in the range [-1, 1].
-    /// The speed is relative to the maximum speed of the motor.
+    /// Computes the relative velocity of the paddle (X, Y), where X and Y are in the range
+    /// [-10^4, 10^4]. The speed is relative to the maximum speed of the motor.
     #[inline]
-    const fn corexy_to_cartesian(mut x: f32, mut y: f32) -> (f32, f32) {
+    const fn corexy_to_cartesian(mut x: i16, mut y: i16) -> (i16, i16) {
         // If x + y > 1, scale the values such that x + y = 1.
-        if x + y > 1.0 {
-            let scale = 1.0 / (x + y);
+        if x + y > RANGE as i16 {
+            let scale = RANGE as i16 / (x + y);
             x *= scale;
             y *= scale;
         }
@@ -53,19 +56,16 @@ impl Hardware {
         // * B = (X - Y) * MAX_SPEED
         //
         // Reference: <http://wiki.fluidnc.com/en/config/kinematics>
-        let a = (x + y) * Self::MOTOR_MAX_SPEED as f32;
-        let b = (x - y) * Self::MOTOR_MAX_SPEED as f32;
-        (a, b)
+        (x + y, x - y)
     }
 
-    /// Runs the `V` command to set the relative speed of the paddle.
+    /// Runs the `V` command to run the paddle at a specified relative velocity.
     ///
     /// # Parameters
-    /// - `x`: The relative speed of the paddle in the X direction in the range [-10^4, 10^4].
-    /// - `y`: The relative speed of the paddle in the Y direction in the range [-10^4, 10^4].
-    pub fn set_rel_speed(&mut self, x: i16, y: i16) {
-        const RANGE: i16 = 10_000;
-        let (a, b) = Self::corexy_to_cartesian(x as f32 / RANGE as f32, y as f32 / RANGE as f32);
+    /// - `x`: The relative velocity of the paddle in the X direction in the range [-10^4, 10^4].
+    /// - `y`: The relative velocity the paddle in the Y direction in the range [-10^4, 10^4].
+    pub fn run_at_rel_velocity(&mut self, x: i16, y: i16) {
+        let (a, b) = Self::corexy_to_cartesian(x, y);
 
         ufmt::uwriteln!(
             self.serial,
@@ -74,13 +74,13 @@ impl Hardware {
             y
         )
         .ok();
-        self.stepper_a.set_speed(a);
-        self.stepper_b.set_speed(b);
+        self.stepper_a.run_at_speed(a);
+        self.stepper_b.run_at_speed(b);
     }
 
     fn tick(&mut self) {
-        self.stepper_a.step();
-        self.stepper_b.step();
+        self.stepper_a.poll();
+        self.stepper_b.poll();
     }
 }
 
@@ -121,7 +121,7 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
                 Command::V => {
                     let x = i16::from_le_bytes([bytes[0], bytes[1]]);
                     let y = i16::from_le_bytes([bytes[2], bytes[3]]);
-                    hw.set_rel_speed(x, y);
+                    hw.run_at_rel_velocity(x, y);
                 }
             }
         }
@@ -160,7 +160,6 @@ fn main() -> ! {
         pins.d1.into_output(),
         BaudrateArduinoExt::into_baudrate(BITRATE),
     );
-    ufmt::uwriteln!(serial, "Ready!").ok();
 
     let stepper_a = Stepper::from_pins(
         pins.d2.into_output().downgrade(),
@@ -171,6 +170,15 @@ fn main() -> ! {
         pins.d6.into_output().downgrade(),
     );
 
+    // Enable interrupts globally
+    unsafe {
+        // SAFETY: Not inside a critical section and any non-atomic operations have been completed
+        // at this point.
+        avr_device::interrupt::enable();
+    }
+    clock::prepare(dp.TC1);
+
+    ufmt::uwriteln!(serial, "Ready!").ok();
     let mut hw = Hardware {
         serial,
         stepper_a,

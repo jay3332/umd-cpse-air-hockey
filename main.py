@@ -5,6 +5,9 @@ from typing import Final
 #: The bitrate of the serial connection.
 SERIAL_BITRATE: Final[int] = 115_200
 
+#: The range of the motor speed.
+RANGE: Final[int] = 10_000
+
 
 class Tx:
     """Serial communicator"""
@@ -20,9 +23,9 @@ class Tx:
         self.serial.close()
 
     def update_raw_motor_speeds(self, pos: JoyStick) -> None:
-        x = int(pos.x * 1_000_000)
-        y = int(pos.y * 1_000_000)
-        self.send(b'V' + x.to_bytes(4, 'little', signed=True) + y.to_bytes(4, 'little', signed=True))
+        x = int(pos.x * RANGE)
+        y = int(pos.y * RANGE)
+        self.send(b'V' + x.to_bytes(2, 'little', signed=True) + y.to_bytes(2, 'little', signed=True))
 
 
 class EventHandler:
