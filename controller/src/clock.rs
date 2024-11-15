@@ -5,15 +5,15 @@ use avr_device::interrupt::Mutex;
 use core::cell::Cell;
 
 /// The clock frequency of the ATmega328P, in MHz.
-pub const FREQ_UHZ: u32 = arduino_hal::DefaultClock::FREQ / 1_000_000; // 16 MHz
+pub const FREQ_MHZ: u32 = arduino_hal::DefaultClock::FREQ / 1_000_000; // 16 MHz
 
 /// The prescaled clock frequency of the ATmega328P, in MHz.
-pub const PRESCALED_FREQ_UHZ: u32 = FREQ_UHZ / 8; // 2 MHz
+pub const PRESCALED_FREQ_MHZ: u32 = FREQ_MHZ / 8; // 2 MHz
 /// The number of prescaled clock ticks for each overflow.
 pub const TICKS_PER_OVERFLOW: u16 = 8;
 
 /// The number of microseconds it will take to reach an overflow and thus an interrupt.
-pub const MICROS_PER_OVERFLOW: u32 = TICKS_PER_OVERFLOW as u32 / PRESCALED_FREQ_UHZ; // 4 µs
+pub const MICROS_PER_OVERFLOW: u32 = TICKS_PER_OVERFLOW as u32 / PRESCALED_FREQ_MHZ; // 4 µs
 
 static INTERRUPTS: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
 
