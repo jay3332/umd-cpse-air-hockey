@@ -11,10 +11,10 @@ pub const FREQ_UHZ: u32 = arduino_hal::DefaultClock::FREQ / 1_000_000; // 16 µH
 pub const PRESCALED_FREQ_UHZ: u32 = FREQ_UHZ / 8; // 2 µHz
 
 /// The number of prescaled clock ticks for each overflow.
-pub const TICKS_PER_OVERFLOW: u16 = 2;
+pub const TICKS_PER_OVERFLOW: u16 = 8;
 
 /// The number of microseconds it will take to reach an overflow and thus an interrupt.
-pub const MICROS_PER_OVERFLOW: u32 = PRESCALED_FREQ_UHZ * TICKS_PER_OVERFLOW as u32; // 4 µs
+pub const MICROS_PER_OVERFLOW: u32 = TICKS_PER_OVERFLOW as u32 / PRESCALED_FREQ_UHZ; // 4 µs
 
 static INTERRUPTS: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
 
