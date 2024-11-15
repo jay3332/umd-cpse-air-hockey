@@ -7,7 +7,7 @@ use core::cell::Cell;
 /// The clock frequency of the ATmega328P, in µHz.
 pub const FREQ_UHZ: u32 = arduino_hal::DefaultClock::FREQ / 1_000_000; // 16 µHz
 
-/// The prescaled clock frequency of the ATmega328P, in µMz.
+/// The prescaled clock frequency of the ATmega328P, in µHz.
 pub const PRESCALED_FREQ_UHZ: u32 = FREQ_UHZ / 8; // 2 µHz
 
 /// The number of prescaled clock ticks for each overflow.
