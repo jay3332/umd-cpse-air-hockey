@@ -46,7 +46,7 @@ impl Hardware {
     #[inline]
     fn corexy_to_cartesian(mut x: i16, mut y: i16) -> (i16, i16) {
         x = -x; // Invert the X direction (such that right is positive)
-        // If x + y > 1, scale the values such that x + y = 1.
+                // If x + y > 1, scale the values such that x + y = 1.
         let total = (x + y).unsigned_abs().max((x - y).unsigned_abs());
         if total > RANGE {
             let scale = RANGE as f32 / total as f32;
@@ -189,14 +189,8 @@ fn main() -> ! {
         BaudrateArduinoExt::into_baudrate(BITRATE),
     );
 
-    let mut stepper_a = Stepper::from_pins(
-        pins.d4.into_output(),
-        pins.d7.into_output(),
-    );
-    let mut stepper_b = Stepper::from_pins(
-        pins.d3.into_output(),
-        pins.d6.into_output(),
-    );
+    let mut stepper_a = Stepper::from_pins(pins.d4.into_output(), pins.d7.into_output());
+    let mut stepper_b = Stepper::from_pins(pins.d3.into_output(), pins.d6.into_output());
 
     // Enable interrupts globally
     unsafe {
