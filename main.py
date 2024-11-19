@@ -1,6 +1,8 @@
+from time import sleep
+from typing import Final
+
 from dualsense_controller import DualSenseController, JoyStick, active_dualsense_controller
 from serial import Serial
-from typing import Final
 
 #: The bitrate of the serial connection.
 SERIAL_BITRATE: Final[int] = 115_200
@@ -14,7 +16,6 @@ class Tx:
 
     def __init__(self) -> None:
         self.serial: Serial = Serial(port='/dev/cu.usbmodem101', baudrate=SERIAL_BITRATE)
-        print(self.serial.readline())
 
     def send(self, data: bytes) -> None:
         self.serial.write(data)
@@ -41,7 +42,7 @@ class EventHandler:
         self.tx: Tx = Tx()
 
         controller.left_stick.on_change(self.on_left_stick_changed)
-        controller.btn_square.once_change(self.tx.send_debug)
+        controller.btn_square.on_down(self.tx.send_debug)
         # controller.left_trigger.on_change(self.on_left_trigger_changed)
 
     def on_left_stick_changed(self, joystick: JoyStick) -> None:
@@ -52,11 +53,14 @@ def main() -> None:
     with active_dualsense_controller(device_index_or_device_info=0) as controller:
         handler = EventHandler(controller)
 
-        while True:
-            try:
-                print(handler.tx.serial.read_all().decode('utf-8'), end='')
-            except KeyboardInterrupt:
-                break
+        try:
+            while True:
+                print(handler.tx.serial.read_all().decode('utf-8', errors='ignore'), end='')
+                # Give serial time to send data
+                sleep(1.0)
+        except KeyboardInterrupt:
+            handler.tx.close()
+            print('Bye')
 
 
 if __name__ == "__main__":

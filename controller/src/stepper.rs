@@ -1,5 +1,5 @@
 use crate::RANGE;
-use arduino_hal::hal::port::{mode, Dynamic, Pin};
+use arduino_hal::hal::port::{mode, Dynamic, Pin, PinOps};
 use core::cmp::Ordering;
 use ufmt::{uDebug, uWrite, Formatter};
 
@@ -35,9 +35,9 @@ impl uDebug for Action {
 }
 
 /// Driver for the stepper motor.
-pub struct Stepper {
-    step: Output,
-    dir: Output,
+pub struct Stepper<Step, Dir> {
+    step: Output<Step>,
+    dir: Output<Dir>,
     /// The current action the motor is performing.
     pub action: Action,
     /// The step count, n, the motor is currently on.
@@ -46,21 +46,26 @@ pub struct Stepper {
     pub(crate) delay: u32,
     /// The time the motor last stepped, given in microseconds since program start.
     last_step: u32,
+
+    _step_high: bool,
+    _dir_high: bool,
 }
 
-impl Stepper {
+impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
     /// Minimum delay between each step. (The "fastest" speed)
     ///
     /// The curve of "relative speed" follows a reciprocal function, where the delay is inversely
     /// proportional to the speed. ∆t = |MIN_DELAY_MICROS / speed|.
-    pub const MIN_DELAY_MICROS: u32 = 30;
+    pub const MIN_DELAY_MICROS: u32 = 40;
 
     /// The absolute rotary bounds of the stepper motors, in steps.
     /// The motor will not move beyond these bounds.
     pub const MAX_STEPS: i32 = 50_000;
 
     /// Creates a new stepper motor instance from the given [`Pins`].
-    pub fn from_pins(step: Output, dir: Output) -> Self {
+    pub fn from_pins(step: Output<Step>, dir: Output<Dir>) -> Self {
+        let _step_high = step.is_set_high();
+        let _dir_high = dir.is_set_high();
         Self {
             step,
             dir,
@@ -68,6 +73,8 @@ impl Stepper {
             steps: 0,
             delay: Self::MIN_DELAY_MICROS,
             last_step: 0,
+            _step_high,
+            _dir_high,
         }
     }
 
@@ -104,7 +111,7 @@ impl Stepper {
     /// The speed should be in the range [-10^4, 10^4].
     #[inline]
     pub fn run_at_speed(&mut self, speed: i16) {
-        let target = Stepper::MAX_STEPS * speed.signum() as i32;
+        let target = Self::MAX_STEPS * speed.signum() as i32;
         self.move_to(target, speed.unsigned_abs());
     }
 
@@ -129,7 +136,12 @@ impl Stepper {
     /// - This does not check if the motor should be stopped nor consider the acceleration profile.
     #[inline]
     fn step(&mut self) {
-        self.step.toggle();
+        self._step_high = !self._step_high;
+        if self._step_high {
+            self.step.set_high();
+        } else {
+            self.step.set_low();
+        }
         self.steps += self.direction();
     }
 
@@ -144,11 +156,17 @@ impl Stepper {
             Action::MoveTo(target) => {
                 let sign = match self.steps.cmp(&target) {
                     Ordering::Less => {
-                        self.dir.set_low();
+                        if self._dir_high {
+                            self.dir.set_low();
+                            self._dir_high = false;
+                        }
                         -1
                     }
                     Ordering::Greater => {
-                        self.dir.set_high();
+                        if !self._dir_high {
+                            self.dir.set_high();
+                            self._dir_high = true;
+                        }
                         1
                     }
                     Ordering::Equal => {
@@ -157,8 +175,14 @@ impl Stepper {
                     }
                 };
 
-                let steps_needed = (micros - self.last_step) / self.delay;
-                for _ in 0..steps_needed {
+                let steps_needed = match self.last_step {
+                    0 => 1,
+                    last_step => {
+                        let elapsed = micros.wrapping_sub(last_step);
+                        elapsed / self.delay
+                    }
+                };
+                for _ in 0..steps_needed.min(10) {
                     self.step();
                 }
                 self.last_step = micros;
@@ -170,7 +194,7 @@ impl Stepper {
     /// Returns -1 if the motor is turning counter-clockwise, otherwise 1.
     #[inline]
     pub fn direction(&self) -> i32 {
-        if self.dir.is_set_high() {
+        if self._dir_high {
             1
         } else {
             -1

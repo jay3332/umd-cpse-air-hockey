@@ -12,6 +12,7 @@ use stepper::Stepper;
 
 use arduino_hal::{
     hal::{
+        port::{PD3, PD4, PD6, PD7},
         usart::{BaudrateArduinoExt, Usart0},
         Pins as SrcPins,
     },
@@ -34,8 +35,8 @@ type Serial = Usart0<DefaultClock>;
 
 pub struct Hardware {
     pub serial: Serial,
-    pub stepper_a: Stepper,
-    pub stepper_b: Stepper,
+    pub stepper_a: Stepper<PD4, PD7>,
+    pub stepper_b: Stepper<PD3, PD6>,
     pub tc0: TC0,
 }
 
@@ -43,10 +44,12 @@ impl Hardware {
     /// Computes the relative velocity of the paddle (X, Y), where X and Y are in the range
     /// [-10^4, 10^4]. The speed is relative to the maximum speed of the motor.
     #[inline]
-    const fn corexy_to_cartesian(mut x: i16, mut y: i16) -> (i16, i16) {
+    fn corexy_to_cartesian(mut x: i16, mut y: i16) -> (i16, i16) {
+        x = -x; // Invert the X direction (such that right is positive)
         // If x + y > 1, scale the values such that x + y = 1.
-        if x + y > RANGE as i16 {
-            let scale = RANGE as f32 / (x + y) as f32;
+        let total = (x + y).unsigned_abs().max((x - y).unsigned_abs());
+        if total > RANGE {
+            let scale = RANGE as f32 / total as f32;
             x = (x as f32 * scale) as _;
             y = (y as f32 * scale) as _;
         }
@@ -71,22 +74,8 @@ impl Hardware {
     pub fn run_at_rel_velocity(&mut self, x: i16, y: i16) {
         let (a, b) = Self::corexy_to_cartesian(x, y);
 
-        ufmt::uwriteln!(
-            self.serial,
-            "setting relative motor speeds a={}, b={}",
-            x,
-            y
-        )
-        .ok();
         self.stepper_a.run_at_speed(a);
         self.stepper_b.run_at_speed(b);
-        ufmt::uwriteln!(
-            self.serial,
-            "motor delays set a={}, b={}",
-            self.stepper_a.delay,
-            self.stepper_b.delay
-        )
-        .ok();
     }
 
     /// Returns the number of microseconds that have passed since the program started, with
@@ -98,8 +87,12 @@ impl Hardware {
 
     fn tick(&mut self) {
         let m = self.micros();
-        self.stepper_a.poll(m);
-        self.stepper_b.poll(m);
+        let a = self.stepper_a.poll(m);
+        let b = self.stepper_b.poll(m);
+
+        if a > 50 || b > 50 {
+            ufmt::uwriteln!(self.serial, "polled late: del_a={}, del_b={}", a, b).ok();
+        }
     }
 }
 
@@ -196,13 +189,13 @@ fn main() -> ! {
         BaudrateArduinoExt::into_baudrate(BITRATE),
     );
 
-    let stepper_a = Stepper::from_pins(
-        pins.d2.into_output().downgrade(),
-        pins.d5.into_output().downgrade(),
+    let mut stepper_a = Stepper::from_pins(
+        pins.d4.into_output(),
+        pins.d7.into_output(),
     );
-    let stepper_b = Stepper::from_pins(
-        pins.d3.into_output().downgrade(),
-        pins.d6.into_output().downgrade(),
+    let mut stepper_b = Stepper::from_pins(
+        pins.d3.into_output(),
+        pins.d6.into_output(),
     );
 
     // Enable interrupts globally
