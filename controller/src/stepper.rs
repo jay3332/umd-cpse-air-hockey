@@ -1,11 +1,12 @@
-use crate::{clock::micros, RANGE};
+use crate::RANGE;
 use arduino_hal::hal::port::{mode, Dynamic, Pin};
 use core::cmp::Ordering;
+use ufmt::{uDebug, uWrite, Formatter};
 
 type Output<P = Dynamic> = Pin<mode::Output, P>;
 
 /// The current active action of the stepper motor.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     /// The motor is stopped.
     #[default]
@@ -17,6 +18,22 @@ pub enum Action {
     ),
 }
 
+impl uDebug for Action {
+    fn fmt<W>(&self, f: &mut Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: uWrite + ?Sized,
+    {
+        match self {
+            Self::Stopped => f.write_str("Stopped"),
+            Self::MoveTo(target) => {
+                f.write_str("MoveTo(")?;
+                target.fmt(f)?;
+                f.write_str(")")
+            }
+        }
+    }
+}
+
 /// Driver for the stepper motor.
 pub struct Stepper {
     step: Output,
@@ -26,7 +43,7 @@ pub struct Stepper {
     /// The step count, n, the motor is currently on.
     pub steps: i32,
     /// The delay between each step, in microseconds.
-    delay: u32,
+    pub(crate) delay: u32,
     /// The time the motor last stepped, given in microseconds since program start.
     last_step: u32,
 }
@@ -36,7 +53,7 @@ impl Stepper {
     ///
     /// The curve of "relative speed" follows a reciprocal function, where the delay is inversely
     /// proportional to the speed. ∆t = |MIN_DELAY_MICROS / speed|.
-    pub const MIN_DELAY_MICROS: u32 = 40;
+    pub const MIN_DELAY_MICROS: u32 = 30;
 
     /// The absolute rotary bounds of the stepper motors, in steps.
     /// The motor will not move beyond these bounds.
@@ -121,11 +138,10 @@ impl Stepper {
     /// # Returns
     /// The difference in steps since before the poll. This is typically -1, 0, or 1, given this
     /// function is called frequently enough. If the motor is stopped, this will always return 0.
-    pub fn poll(&mut self) -> i32 {
+    pub fn poll(&mut self, micros: u32) -> i32 {
         match self.action {
             Action::Stopped => 0,
             Action::MoveTo(target) => {
-                let now = micros();
                 let sign = match self.steps.cmp(&target) {
                     Ordering::Less => {
                         self.dir.set_low();
@@ -140,12 +156,12 @@ impl Stepper {
                         return 0;
                     }
                 };
-                let steps_needed = (now - self.last_step) / self.delay;
 
+                let steps_needed = (micros - self.last_step) / self.delay;
                 for _ in 0..steps_needed {
                     self.step();
                 }
-                self.last_step = now;
+                self.last_step = micros;
                 steps_needed as i32 * sign
             }
         }

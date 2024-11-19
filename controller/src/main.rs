@@ -3,6 +3,7 @@
 #![no_std]
 #![no_main]
 #![feature(abi_avr_interrupt)]
+#![feature(let_chains)]
 
 mod clock;
 mod stepper;
@@ -17,6 +18,8 @@ use arduino_hal::{
     prelude::*,
     DefaultClock, Peripherals, Pins,
 };
+use avr_device::atmega328p::TC0;
+use embedded_hal::digital::OutputPin;
 #[allow(unused_imports)]
 use panic_halt;
 
@@ -33,6 +36,7 @@ pub struct Hardware {
     pub serial: Serial,
     pub stepper_a: Stepper,
     pub stepper_b: Stepper,
+    pub tc0: TC0,
 }
 
 impl Hardware {
@@ -42,9 +46,9 @@ impl Hardware {
     const fn corexy_to_cartesian(mut x: i16, mut y: i16) -> (i16, i16) {
         // If x + y > 1, scale the values such that x + y = 1.
         if x + y > RANGE as i16 {
-            let scale = RANGE as i16 / (x + y);
-            x *= scale;
-            y *= scale;
+            let scale = RANGE as f32 / (x + y) as f32;
+            x = (x as f32 * scale) as _;
+            y = (y as f32 * scale) as _;
         }
 
         // Define the two stepper motors as A and B, turning in the X direction clockwise.
@@ -76,11 +80,26 @@ impl Hardware {
         .ok();
         self.stepper_a.run_at_speed(a);
         self.stepper_b.run_at_speed(b);
+        ufmt::uwriteln!(
+            self.serial,
+            "motor delays set a={}, b={}",
+            self.stepper_a.delay,
+            self.stepper_b.delay
+        )
+        .ok();
+    }
+
+    /// Returns the number of microseconds that have passed since the program started, with
+    /// 4 µs resolution.
+    #[inline]
+    pub fn micros(&self) -> u32 {
+        clock::micros(&self.tc0)
     }
 
     fn tick(&mut self) {
-        self.stepper_a.poll();
-        self.stepper_b.poll();
+        let m = self.micros();
+        self.stepper_a.poll(m);
+        self.stepper_b.poll(m);
     }
 }
 
@@ -96,6 +115,7 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
     #[derive(Copy, Clone, Debug, PartialEq)]
     enum Command {
         V,
+        D,
     }
 
     impl Command {
@@ -105,6 +125,7 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
         const fn from_u8(byte: u8) -> Option<Self> {
             match byte {
                 b'V' => Some(Self::V),
+                b'D' => Some(Self::D),
                 _ => None,
             }
         }
@@ -113,6 +134,7 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
         const fn bytes_needed(&self) -> usize {
             match self {
                 Command::V => 4,
+                Command::D => 0,
             }
         }
 
@@ -123,6 +145,16 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
                     let y = i16::from_le_bytes([bytes[2], bytes[3]]);
                     hw.run_at_rel_velocity(x, y);
                 }
+                Command::D => {
+                    ufmt::uwriteln!(
+                        hw.serial,
+                        "DEBUG: {} mcs, a.steps={}, b.steps={}",
+                        hw.micros(),
+                        hw.stepper_a.steps,
+                        hw.stepper_b.steps
+                    )
+                    .ok();
+                }
             }
         }
     }
@@ -132,15 +164,18 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
     let mut buffer_idx = 0;
 
     loop {
+        if let Some(cmd) = current
+            && buffer_idx == cmd.bytes_needed()
+        {
+            cmd.done(hw, &buffer);
+            current = None;
+            buffer_idx = 0;
+        }
+
         if let Ok(byte) = hw.serial.read() {
-            if let Some(cmd) = current {
+            if current.is_some() {
                 buffer[buffer_idx] = byte;
                 buffer_idx += 1;
-                if buffer_idx == cmd.bytes_needed() {
-                    cmd.done(hw, &buffer);
-                    current = None;
-                    buffer_idx = 0;
-                }
             } else {
                 current = Command::from_u8(byte);
             }
@@ -176,13 +211,14 @@ fn main() -> ! {
         // at this point.
         avr_device::interrupt::enable();
     }
-    clock::prepare(dp.TC1);
+    clock::prepare(&dp.TC0);
 
     ufmt::uwriteln!(serial, "Ready!").ok();
     let mut hw = Hardware {
         serial,
         stepper_a,
         stepper_b,
+        tc0: dp.TC0,
     };
     start_recv(&mut hw)
 }
