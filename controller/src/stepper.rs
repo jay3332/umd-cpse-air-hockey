@@ -60,7 +60,7 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
 
     /// The absolute rotary bounds of the stepper motors, in steps.
     /// The motor will not move beyond these bounds.
-    pub const MAX_STEPS: i32 = 50_000;
+    pub const MAX_STEPS: i32 = 100_000;
 
     /// Creates a new stepper motor instance from the given [`Pins`].
     pub fn from_pins(step: Output<Step>, dir: Output<Dir>) -> Self {
@@ -156,6 +156,10 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
             Action::MoveTo(target) => {
                 let sign = match self.steps.cmp(&target) {
                     Ordering::Less => {
+                        if self.steps < -Self::MAX_STEPS {
+                            self.stop();
+                            return 0;
+                        }
                         if self._dir_high {
                             self.dir.set_low();
                             self._dir_high = false;
@@ -163,6 +167,10 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
                         -1
                     }
                     Ordering::Greater => {
+                        if self.steps > Self::MAX_STEPS {
+                            self.stop();
+                            return 0;
+                        }
                         if !self._dir_high {
                             self.dir.set_high();
                             self._dir_high = true;

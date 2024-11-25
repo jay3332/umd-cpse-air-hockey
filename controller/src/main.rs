@@ -91,7 +91,7 @@ impl Hardware {
         let a = self.stepper_a.poll(m);
         let b = self.stepper_b.poll(m);
 
-        if a > 50 || b > 50 {
+        if a > 1000 || b > 1000 {
             ufmt::uwriteln!(self.serial, "polled late: del_a={}, del_b={}", a, b).ok();
         }
     }
@@ -113,7 +113,7 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
     }
 
     impl Command {
-        const MAX_BUFFER_SIZE: usize = 4;
+        const MAX_BUFFER_SIZE: usize = 2;
 
         #[inline]
         const fn from_u8(byte: u8) -> Option<Self> {
@@ -127,7 +127,7 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
         #[inline]
         const fn bytes_needed(&self) -> usize {
             match self {
-                Command::V => 4,
+                Command::V => 2,
                 Command::D => 0,
             }
         }
@@ -135,8 +135,8 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
         fn done(&self, hw: &mut Hardware, bytes: &[u8]) {
             match self {
                 Command::V => {
-                    let x = i16::from_le_bytes([bytes[0], bytes[1]]);
-                    let y = i16::from_le_bytes([bytes[2], bytes[3]]);
+                    let x = bytes[0] as i8 as i16 * 100;
+                    let y = bytes[1] as i8 as i16 * 100;
                     hw.run_at_rel_velocity(x, y);
                 }
                 Command::D => {
