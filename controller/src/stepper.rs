@@ -56,11 +56,11 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
     ///
     /// The curve of "relative speed" follows a reciprocal function, where the delay is inversely
     /// proportional to the speed. ∆t = |MIN_DELAY_MICROS / speed|.
-    pub const MIN_DELAY_MICROS: u32 = 40;
+    pub const MIN_DELAY_MICROS: u32 = 30;
 
     /// The absolute rotary bounds of the stepper motors, in steps.
     /// The motor will not move beyond these bounds.
-    pub const MAX_STEPS: i32 = 100_000;
+    pub const MAX_STEPS: i32 = i32::MAX / 2;
 
     /// Creates a new stepper motor instance from the given [`Pins`].
     pub fn from_pins(step: Output<Step>, dir: Output<Dir>) -> Self {

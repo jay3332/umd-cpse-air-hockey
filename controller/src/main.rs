@@ -165,6 +165,7 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
             current = None;
             buffer_idx = 0;
         }
+        hw.tick();
 
         if let Ok(byte) = hw.serial.read() {
             if current.is_some() {
