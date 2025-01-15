@@ -1,6 +1,7 @@
 use crate::RANGE;
 use arduino_hal::hal::port::{mode, Dynamic, Pin, PinOps};
 use core::cmp::Ordering;
+use embedded_hal::digital::{OutputPin, PinState, StatefulOutputPin};
 use ufmt::{uDebug, uWrite, Formatter};
 
 type Output<P = Dynamic> = Pin<mode::Output, P>;
@@ -16,6 +17,11 @@ pub enum Action {
         /// The target step count, n, the motor is moving to.
         i32,
     ),
+    /// The motor is moving endlessly in a certain direction at a certain speed.
+    Direction(
+        /// Whether the direction pin should be on HIGH.
+        PinState,
+    ),
 }
 
 impl uDebug for Action {
@@ -28,6 +34,14 @@ impl uDebug for Action {
             Self::MoveTo(target) => {
                 f.write_str("MoveTo(")?;
                 target.fmt(f)?;
+                f.write_str(")")
+            }
+            Self::Direction(dir) => {
+                f.write_str("Direction(")?;
+                match dir {
+                    PinState::Low => f.write_str("Low")?,
+                    PinState::High => f.write_str("High")?,
+                }
                 f.write_str(")")
             }
         }
@@ -48,7 +62,7 @@ pub struct Stepper<Step, Dir> {
     last_step: u32,
 
     _step_high: bool,
-    _dir_high: bool,
+    _dir: PinState,
 }
 
 impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
@@ -58,14 +72,13 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
     /// proportional to the speed. ∆t = |MIN_DELAY_MICROS / speed|.
     pub const MIN_DELAY_MICROS: u32 = 30;
 
-    /// The absolute rotary bounds of the stepper motors, in steps.
-    /// The motor will not move beyond these bounds.
-    pub const MAX_STEPS: i32 = i32::MAX / 2;
-
     /// Creates a new stepper motor instance from the given [`Pins`].
     pub fn from_pins(step: Output<Step>, dir: Output<Dir>) -> Self {
         let _step_high = step.is_set_high();
-        let _dir_high = dir.is_set_high();
+        let _dir = dir
+            .is_set_high()
+            .then_some(PinState::High)
+            .unwrap_or(PinState::Low);
         Self {
             step,
             dir,
@@ -74,7 +87,7 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
             delay: Self::MIN_DELAY_MICROS,
             last_step: 0,
             _step_high,
-            _dir_high,
+            _dir,
         }
     }
 
@@ -111,8 +124,12 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
     /// The speed should be in the range [-10^4, 10^4].
     #[inline]
     pub fn run_at_speed(&mut self, speed: i16) {
-        let target = Self::MAX_STEPS * speed.signum() as i32;
-        self.move_to(target, speed.unsigned_abs());
+        let direction = speed
+            .is_positive()
+            .then_some(PinState::Low)
+            .unwrap_or(PinState::High);
+        self.action = Action::Direction(direction);
+        self.set_speed(speed.unsigned_abs());
     }
 
     /// Stops the motor.
@@ -151,61 +168,45 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
     /// The difference in steps since before the poll. This is typically -1, 0, or 1, given this
     /// function is called frequently enough. If the motor is stopped, this will always return 0.
     pub fn poll(&mut self, micros: u32) -> i32 {
-        match self.action {
-            Action::Stopped => 0,
-            Action::MoveTo(target) => {
-                let sign = match self.steps.cmp(&target) {
-                    Ordering::Less => {
-                        if self.steps < -Self::MAX_STEPS {
-                            self.stop();
-                            return 0;
-                        }
-                        if self._dir_high {
-                            self.dir.set_low();
-                            self._dir_high = false;
-                        }
-                        -1
-                    }
-                    Ordering::Greater => {
-                        if self.steps > Self::MAX_STEPS {
-                            self.stop();
-                            return 0;
-                        }
-                        if !self._dir_high {
-                            self.dir.set_high();
-                            self._dir_high = true;
-                        }
-                        1
-                    }
-                    Ordering::Equal => {
-                        self.stop();
-                        return 0;
-                    }
-                };
-
-                let steps_needed = match self.last_step {
-                    0 => 1,
-                    last_step => {
-                        let elapsed = micros.wrapping_sub(last_step);
-                        elapsed / self.delay
-                    }
-                };
-                for _ in 0..steps_needed.min(10) {
-                    self.step();
+        let direction = match self.action {
+            Action::Stopped => return 0,
+            Action::MoveTo(target) => match target.cmp(&self.steps) {
+                Ordering::Less => PinState::Low,
+                Ordering::Greater => PinState::High,
+                Ordering::Equal => {
+                    self.stop();
+                    return 0;
                 }
-                self.last_step = micros;
-                steps_needed as i32 * sign
-            }
+            },
+            Action::Direction(dir) => dir,
+        };
+        match (self._dir, direction) {
+            (PinState::High, PinState::Low) => self.dir.set_low(),
+            (PinState::Low, PinState::High) => self.dir.set_high(),
+            _ => {}
         }
+        self._dir = direction;
+
+        let steps_needed = match self.last_step {
+            0 => 1,
+            last_step => {
+                let elapsed = micros.wrapping_sub(last_step);
+                elapsed / self.delay
+            }
+        };
+        for _ in 0..steps_needed.min(10) {
+            self.step();
+        }
+        self.last_step = micros;
+        steps_needed as i32 * self.direction()
     }
 
     /// Returns -1 if the motor is turning counter-clockwise, otherwise 1.
     #[inline]
     pub fn direction(&self) -> i32 {
-        if self._dir_high {
-            1
-        } else {
-            -1
+        match self._dir {
+            PinState::Low => -1,
+            PinState::High => 1,
         }
     }
 }

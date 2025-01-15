@@ -10,15 +10,11 @@ mod stepper;
 
 use stepper::Stepper;
 
-use arduino_hal::{
-    hal::{
-        port::{PD3, PD4, PD6, PD7},
-        usart::{BaudrateArduinoExt, Usart0},
-        Pins as SrcPins,
-    },
-    prelude::*,
-    DefaultClock, Peripherals, Pins,
-};
+use arduino_hal::{delay_us, hal::{
+    port::*,
+    usart::{BaudrateArduinoExt, Usart0},
+    Pins as SrcPins,
+}, prelude::*, DefaultClock, Peripherals, Pins};
 use avr_device::atmega328p::TC0;
 use embedded_hal::digital::OutputPin;
 #[allow(unused_imports)]
@@ -41,10 +37,13 @@ pub struct Hardware {
 }
 
 impl Hardware {
+    const X_BOUNDS: (i32, i32) = (-10_000, 10_000);
+    const Y_BOUNDS: (i32, i32) = (-10_000, 10_000);
+
     /// Computes the relative velocity of the paddle (X, Y), where X and Y are in the range
     /// [-10^4, 10^4]. The speed is relative to the maximum speed of the motor.
     #[inline]
-    fn corexy_to_cartesian(mut x: i16, mut y: i16) -> (i16, i16) {
+    fn cartesian_to_corexy(mut x: i16, mut y: i16) -> (i16, i16) {
         x = -x; // Invert the X direction (such that right is positive)
 
         // If x + y > 1, scale the values such that x + y = 1.
@@ -67,13 +66,32 @@ impl Hardware {
         (x + y, x - y)
     }
 
+    #[inline]
+    const fn corexy_to_cartesian(a: i32, b: i32) -> (i32, i32) {
+        (a + b, a - b)
+    }
+
+    pub const fn position(&self) -> (i32, i32) {
+        Self::corexy_to_cartesian(self.stepper_a.steps, self.stepper_b.steps)
+    }
+
     /// Runs the `V` command to run the paddle at a specified relative velocity.
     ///
     /// # Parameters
     /// - `x`: The relative velocity of the paddle in the X direction in the range [-10^4, 10^4].
     /// - `y`: The relative velocity the paddle in the Y direction in the range [-10^4, 10^4].
-    pub fn run_at_rel_velocity(&mut self, x: i16, y: i16) {
-        let (a, b) = Self::corexy_to_cartesian(x, y);
+    pub fn run_at_rel_velocity(&mut self, vx: i16, vy: i16) {
+        // Should we limit (x, y) based off the bounds?
+
+        // let (x, y) = self.position();
+        // if x <= Self::X_BOUNDS.0 && vx < 0
+        //     || x >= Self::X_BOUNDS.1 && vx > 0
+        //
+        // {
+        //     return;
+        // }
+
+        let (a, b) = Self::cartesian_to_corexy(vx, vy);
 
         self.stepper_a.run_at_speed(a);
         self.stepper_b.run_at_speed(b);
@@ -97,13 +115,40 @@ impl Hardware {
     }
 }
 
+/// Receives ONLY 2-bit V commands.
+pub fn start_controller_recv(hw: &mut Hardware) -> ! {
+    let mut prev = None;
+    loop {
+        if let Ok(byte) = hw.serial.read() {
+            if byte == 0xff {
+                ufmt::uwriteln!(
+                    hw.serial,
+                    "DEBUG: {} mcs, a.steps={}, b.steps={}, pos={:?}",
+                    hw.micros(),
+                    hw.stepper_a.steps,
+                    hw.stepper_b.steps,
+                    hw.position(),
+                )
+                .ok();
+            }
+            let adjusted = byte as i8 as i16 * 100;
+            if let Some(x) = prev.take() {
+                hw.run_at_rel_velocity(x, adjusted);
+            } else {
+                prev = Some(adjusted);
+            }
+        }
+        hw.tick();
+    }
+}
+
 /// Receives all commands through the serial port.
 ///
 /// # Serial Commands
 ///
 /// Note: All integers are in little-endian format.
 ///
-/// - ``V[X:i16][Y:i16]`` -> Set the velocity (relative speed) of the paddle to <X/10^4, Y/10^4>.
+/// - ``V[X:i8][Y:i8]`` -> Set the velocity (relative speed) of the paddle to <X/10^4, Y/10^4>.
 ///   Constraints: -10^4 <= X <= 10^4 and -10^4 <= Y <= 10^4.
 pub fn start_recv(hw: &mut Hardware) -> ! {
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -165,7 +210,6 @@ pub fn start_recv(hw: &mut Hardware) -> ! {
             current = None;
             buffer_idx = 0;
         }
-        hw.tick();
 
         if let Ok(byte) = hw.serial.read() {
             if current.is_some() {
@@ -209,5 +253,29 @@ fn main() -> ! {
         stepper_b,
         tc0: dp.TC0,
     };
-    start_recv(&mut hw)
+    // let mut n = 0;
+    // hw.stepper_a.run_at_speed(5000);
+    // hw.stepper_b.run_at_speed(-5000);
+    // loop {
+    //     let dir = (n / 10000) % 2;
+    //     // let dir = 1;
+    //     //
+    //     match dir {
+    //         0 => {
+    //             // hw.stepper_a.run_at_speed(10000);
+    //             // hw.stepper_b.run_at_speed(-10000);
+    //             hw.run_at_rel_velocity(0, 10000);
+    //         },
+    //         1 => {
+    //             // hw.stepper_a.run_at_speed(-10000);
+    //             // hw.stepper_b.run_at_speed(10000);
+    //             hw.run_at_rel_velocity(0, -10000);
+    //         },
+    //         _ => (),
+    //     }
+    //
+    //     n += 1;
+    //     hw.tick();
+    // }
+    start_controller_recv(&mut hw)
 }

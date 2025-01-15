@@ -1,3 +1,4 @@
+from enum import Enum
 from time import sleep
 from typing import Final
 
@@ -11,7 +12,13 @@ SERIAL_BITRATE: Final[int] = 115_200
 RANGE: Final[int] = 100
 
 #: The minimum directional theshold.
-THRESHOLD: Final[int] = 50
+THRESHOLD: Final[int] = 20
+
+#: Whether to allow diagonal movements.
+ALLOW_DIAGONAL_TRANSLATIONS: Final[bool] = False
+
+#: Time per tick, in seconds.
+TICK_LENGTH: Final[float] = 0.01  # 0.0015
 
 
 class Tx:
@@ -26,45 +33,72 @@ class Tx:
     def close(self) -> None:
         self.serial.close()
 
-    def update_raw_motor_speeds(self, x: int, y: int) -> None:
+    def update_raw_motor_speeds(self, x: float, y: float) -> None:
         x = int(x * RANGE)
         y = int(y * RANGE)
-
-        # print('x, y = ', x, y, end=' | ')
-        # total = max(abs(x + y), abs(x - y))
-        # if total > RANGE:
-        #     scale = RANGE / total
-        #     x *= scale
-        #     y *= scale
-        #
-        # print('xf, yf, a, b = ', int(x), int(y), int(x + y), int(x - y))
 
         if abs(x) < THRESHOLD:
             x = 0
         if abs(y) < THRESHOLD:
             y = 0
+        if not ALLOW_DIAGONAL_TRANSLATIONS:
+            if abs(x) < abs(y):
+                x = 0
+            if abs(y) < abs(x):
+                y = 0
 
-        self.send(b'V' + x.to_bytes(1, signed=True) + y.to_bytes(1, signed=True))
+        # print('sending', x, y, 'as', x.to_bytes(1, signed=True) + y.to_bytes(1, signed=True))
+        self.send(x.to_bytes(1, signed=True) + y.to_bytes(1, signed=True))
 
     def send_debug(self) -> None:
         print('sending debug')
-        self.send(b'D')
+        self.send(b'\xff')
+
+
+class AttackState(Enum):
+    dormant = 0
+    attacking = 1
+    retracting = 2
 
 
 class EventHandler:
     """Handles events from the gamepad controller."""
+
+    ATTACK_TICKS: Final[int] = 48
 
     def __init__(self, controller: DualSenseController) -> None:
         self.controller = controller
         self.forward_power: int = 0
         self.tx: Tx = Tx()
 
+        self._attack_state = AttackState.dormant
+        self._attack_ticks = 0
+
         controller.btn_square.on_down(self.tx.send_debug)
+        controller.btn_l1.on_down(self.on_attack_down)
         # controller.left_trigger.on_change(self.on_left_trigger_changed)
         # controller.left_stick.on_change(self.on_left_stick_changed)
 
     def on_left_stick_changed(self, joystick: JoyStick) -> None:
-        self.tx.update_raw_motor_speeds(joystick.x, joystick.y)
+        y = joystick.y
+        self._attack_ticks += 1
+        match self._attack_state:
+            case AttackState.attacking:
+                y = 1.0
+                if self._attack_ticks > self.ATTACK_TICKS:
+                    self._attack_ticks = 0
+                    self._attack_state = AttackState.retracting
+            case AttackState.retracting:
+                y = -1.0
+                if self._attack_ticks > self.ATTACK_TICKS:
+                    self._attack_state = AttackState.dormant
+
+        self.tx.update_raw_motor_speeds(joystick.x, y)
+
+    def on_attack_down(self) -> None:
+        if self._attack_state == AttackState.dormant:
+            self._attack_ticks = 0
+            self._attack_state = AttackState.attacking
 
 
 def main() -> None:
@@ -74,10 +108,11 @@ def main() -> None:
 
         try:
             while True:
-                if n % 50 == 0:
+                if n % 5000 == 0:
                     print(handler.tx.serial.read_all().decode('utf-8', errors='ignore'), end='')
 
                 handler.on_left_stick_changed(controller.left_stick.value)
+                sleep(TICK_LENGTH)
 
         except KeyboardInterrupt:
             handler.tx.close()
