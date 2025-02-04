@@ -1,2 +1,4 @@
 pyserial
 dualsense-controller
+opencv-python
+matplotlive
