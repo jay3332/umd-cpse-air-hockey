@@ -10,11 +10,15 @@ mod stepper;
 
 use stepper::Stepper;
 
-use arduino_hal::{delay_us, hal::{
-    port::*,
-    usart::{BaudrateArduinoExt, Usart0},
-    Pins as SrcPins,
-}, prelude::*, DefaultClock, Peripherals, Pins};
+use arduino_hal::{
+    hal::{
+        port::*,
+        usart::{BaudrateArduinoExt, Usart0},
+        Pins as SrcPins,
+    },
+    prelude::*,
+    DefaultClock, Peripherals, Pins,
+};
 use avr_device::atmega328p::TC0;
 use embedded_hal::digital::OutputPin;
 #[allow(unused_imports)]
@@ -39,6 +43,8 @@ pub struct Hardware {
 impl Hardware {
     const X_BOUNDS: (i32, i32) = (-10_000, 10_000);
     const Y_BOUNDS: (i32, i32) = (-10_000, 10_000);
+
+    const MOVE_TO_POS_RANGE: u32 = 40_000; // Map [0, 255] to [0, 40_000]
 
     /// Computes the relative velocity of the paddle (X, Y), where X and Y are in the range
     /// [-10^4, 10^4]. The speed is relative to the maximum speed of the motor.
@@ -97,6 +103,21 @@ impl Hardware {
         self.stepper_b.run_at_speed(b);
     }
 
+    /// Moves the paddle to some specific position (x, y).
+    ///
+    /// # Parameters
+    /// - `x`: The x-position of the puck to move to in the range [-32768, 32767].
+    /// - `y`: The y-position of the puck to move to in the range [-32768, 32767].
+    pub fn move_to_postion(&mut self, x: i16, y: i16) {
+        // Normalize (x, y) to be in range
+        let x = x as f32 / i16::MAX as f32 * Self::MOVE_TO_POS_RANGE as f32;
+        let y = y as f32 / i16::MAX as f32 * Self::MOVE_TO_POS_RANGE as f32;
+        let (a, b) = (x + y, x - y);
+
+        self.stepper_a.move_to(a as i32 / 2, 10_000);
+        self.stepper_b.move_to(b as i32 / 2, 10_000);
+    }
+
     /// Returns the number of microseconds that have passed since the program started, with
     /// 4 µs resolution.
     #[inline]
@@ -141,6 +162,22 @@ pub fn start_controller_recv(hw: &mut Hardware) -> ! {
         hw.tick();
     }
 }
+
+/// Receives ONLY 2-bit X commands.
+// pub fn start_target_pos_recv(hw: &mut Hardware) -> ! {
+//     let mut prev = None;
+//     loop {
+//         if let Ok(byte) = hw.serial.read() {
+//             let adjusted = byte as i8 as i16 * 100;
+//             if let Some(x) = prev.take() {
+//                 hw.run_at_rel_velocity(x, adjusted);
+//             } else {
+//                 prev = Some(adjusted);
+//             }
+//         }
+//         hw.tick();
+//     }
+// }
 
 /// Receives all commands through the serial port.
 ///
@@ -235,8 +272,8 @@ fn main() -> ! {
         BaudrateArduinoExt::into_baudrate(BITRATE),
     );
 
-    let mut stepper_a = Stepper::from_pins(pins.d4.into_output(), pins.d7.into_output());
-    let mut stepper_b = Stepper::from_pins(pins.d3.into_output(), pins.d6.into_output());
+    let stepper_a = Stepper::from_pins(pins.d4.into_output(), pins.d7.into_output());
+    let stepper_b = Stepper::from_pins(pins.d3.into_output(), pins.d6.into_output());
 
     // Enable interrupts globally
     unsafe {
@@ -253,29 +290,5 @@ fn main() -> ! {
         stepper_b,
         tc0: dp.TC0,
     };
-    // let mut n = 0;
-    // hw.stepper_a.run_at_speed(5000);
-    // hw.stepper_b.run_at_speed(-5000);
-    // loop {
-    //     let dir = (n / 10000) % 2;
-    //     // let dir = 1;
-    //     //
-    //     match dir {
-    //         0 => {
-    //             // hw.stepper_a.run_at_speed(10000);
-    //             // hw.stepper_b.run_at_speed(-10000);
-    //             hw.run_at_rel_velocity(0, 10000);
-    //         },
-    //         1 => {
-    //             // hw.stepper_a.run_at_speed(-10000);
-    //             // hw.stepper_b.run_at_speed(10000);
-    //             hw.run_at_rel_velocity(0, -10000);
-    //         },
-    //         _ => (),
-    //     }
-    //
-    //     n += 1;
-    //     hw.tick();
-    // }
     start_controller_recv(&mut hw)
 }

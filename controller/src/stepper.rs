@@ -153,6 +153,12 @@ impl<Step: PinOps, Dir: PinOps> Stepper<Step, Dir> {
     /// - This does not check if the motor should be stopped nor consider the acceleration profile.
     #[inline]
     fn step(&mut self) {
+        if let Action::MoveTo(n) = self.action
+            && self.steps == n
+        {
+            self.action = Action::Stopped;
+            return;
+        }
         self._step_high = !self._step_high;
         if self._step_high {
             self.step.set_high();
