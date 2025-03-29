@@ -40,6 +40,7 @@ if __name__ == '__main__':
     corners = None
     while True:
         ret, f = capture.read()
+        f = cv2.rotate(f, cv2.ROTATE_90_COUNTERCLOCKWISE)
         if not ret:
             break
 

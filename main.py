@@ -24,7 +24,7 @@ TICK_LENGTH: Final[float] = 0.01  # 0.0015
 BYTE_SEND_INTERVAL: Final[float] = 0.001
 
 #: The serial port to connect to.
-SERIAL_PORT: Final[str] = '/dev/cu.usbmodem2101'
+SERIAL_PORT: Final[str] = '/dev/cu.usbmodem101'  # '/dev/cu.usbmodem2101'
 
 
 class TxStatus(NamedTuple):

@@ -200,7 +200,7 @@ fn main() -> ! {
         //     current_v += accel_per_tick;
         // }
 
-        const ACCEL: i32 = 300;
+        const ACCEL: i32 = 200;
         const CYCLES_PER_SEC: u32 = 16_000_000;
 
         if !_a_done_accel {
