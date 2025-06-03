@@ -9,7 +9,7 @@ This document serves as a walkthrough of the mechanical details of the project, 
 
 This project was heavily inspired by the [*Air Hockey Robot EVO*](https://www.instructables.com/Air-Hockey-Robot-EVO) project by JJRobots. Thus, much of the reference for materials and assembly are documented in the article.
 
-The robot is controlled by a standard Arduino UNO. It is driven by two NEMA 17 Brushless Stepper Motors placed on either side of the table. The motors are wired to the CNC Shield on the Arduino, and each motor is configured with microstepping at $\pu{\frac{1}{8} step/pulse}$.
+The robot is controlled by a standard Arduino UNO. It is driven by two NEMA 17 Brushless Stepper Motors placed on either side of the table. The motors are wired to the CNC Shield on the Arduino, and each motor is configured with microstepping at $\frac{1}{8}\text{ step/pulse}$.
 
 ### Caveats
 
@@ -31,7 +31,7 @@ $$
 \end{align*}
 $$
 
-Where $\Delta a$ pulses are sent to motor $\text{A}$, $\Delta b$ pulses are sent to motor $\text{B}$, and $k$ is some calibrated conversion rate from motor steps to the desired unit (i.e. $\pu{mm}$).
+Where $\Delta a$ pulses are sent to motor $\text{A}$, $\Delta b$ pulses are sent to motor $\text{B}$, and $k$ is some calibrated conversion rate from motor steps to the desired unit (i.e. $\rm{mm}$).
 
 For software reference, this also implies:
 
@@ -102,7 +102,7 @@ Now, you should be able to compile Rust code and flash it to the Arduino. We wil
 Your computer must be able to connect to two peripherals: the Arduino and a webcam.
 
 1. Ensure the Arduino is properly equipped with an [Arduino Uno CNC shield](https://www.amazon.com/Shield-Expansion-Stepper-Engraver-Printer/dp/B07DXNZ9PS)
-2. Ensure the CNC shield is connected to a $\pu{12 V}$ power supply.
+2. Ensure the CNC shield is connected to a $\text{12 V}$ power supply.
    Check that the leads of DC adapter are properly secured, and then power the CNC shield.
 3. Use a mini-USB cable to connect the Arduino UNO to your computer.
 
@@ -225,7 +225,7 @@ TABLE_WIDTH, TABLE_HEIGHT = 350, 800
 Since the robot stick is open-loop controlled, it has no true positional awareness. 
 Thus, a set origin must be calibrated, and the puck must start at this position every time we restart the vision pipeline.
 
-**Unpower the CNC shield, physically move the robot stick as far left as possible and about ~$\pu{1 inch}$ from the top, and then repower the CNC shield.** Again, this must be done every time the vision pipeline needs to be restarted.
+**Unpower the CNC shield, physically move the robot stick as far left as possible and about ~$\text{1 inch}$ from the top, and then repower the CNC shield.** Again, this must be done every time the vision pipeline needs to be restarted.
 
 Finally, start the vision process:
 
